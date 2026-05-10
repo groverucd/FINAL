@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
+import { jsPDF } from 'jspdf'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -107,7 +108,79 @@ export function ReportsTab() {
   }, [toast])
 
   function handleExport() {
-    toast('Weekly report exported as PDF.', 'success')
+    try {
+      const doc = new jsPDF()
+      const now = new Date()
+      const dateLabel = now.toLocaleString()
+      let y = 20
+
+      doc.setFontSize(16)
+      doc.text('Wellspring Flow Weekly Report', 14, y)
+      y += 8
+      doc.setFontSize(11)
+      doc.text(`Generated: ${dateLabel}`, 14, y)
+      y += 10
+
+      const summaryLines = doc.splitTextToSize(weeklySummaryText, 180)
+      doc.setFontSize(12)
+      doc.text('Summary', 14, y)
+      y += 6
+      doc.setFontSize(10)
+      doc.text(summaryLines, 14, y)
+      y += summaryLines.length * 5 + 6
+
+      doc.setFontSize(12)
+      doc.text('Category totals (last 7 days)', 14, y)
+      y += 6
+      doc.setFontSize(10)
+
+      const rowsToExport = summaryRows.length > 0
+        ? summaryRows
+        : donationsByCategory.map((row) => ({
+            category: row.category,
+            intake_total: row.value,
+            outbound_total: 0,
+          }))
+
+      rowsToExport.forEach((row) => {
+        if (y > 275) {
+          doc.addPage()
+          y = 20
+        }
+        const net = row.intake_total - row.outbound_total
+        doc.text(
+          `${row.category}: intake ${row.intake_total}, outbound ${row.outbound_total}, net ${net}`,
+          14,
+          y,
+        )
+        y += 6
+      })
+
+      if (lowStockAlerts.length > 0) {
+        y += 4
+        if (y > 275) {
+          doc.addPage()
+          y = 20
+        }
+        doc.setFontSize(12)
+        doc.text('Low stock alerts', 14, y)
+        y += 6
+        doc.setFontSize(10)
+        lowStockAlerts.forEach((alert) => {
+          if (y > 275) {
+            doc.addPage()
+            y = 20
+          }
+          doc.text(`${alert.label}: ${alert.status}`, 14, y)
+          y += 6
+        })
+      }
+
+      doc.save(`wellspring-report-${now.toISOString().slice(0, 10)}.pdf`)
+      toast('Weekly report exported as PDF.', 'success')
+    } catch {
+      toast('Could not generate PDF. Please try again.', 'error')
+    }
   }
 
   function handleApply(text: string) {
