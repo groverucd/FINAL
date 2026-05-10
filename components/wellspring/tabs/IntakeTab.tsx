@@ -13,6 +13,7 @@ import { conditions, type Condition } from '@/lib/wellspring-data'
 import { useToast } from '../Toast'
 import { useUser } from '../UserContext'
 import { createIntake, getCategories, getInventory, type ApiInventoryItem } from '@/lib/api'
+import { STORAGE_INTAKE_CATEGORY } from '../WorkspaceNavContext'
 
 interface IntakeTabProps {
   onAdded?: (event: {
@@ -74,6 +75,19 @@ export function IntakeTab({ onAdded }: IntakeTabProps) {
       active = false
     }
   }, [toast])
+
+  useEffect(() => {
+    if (categories.length === 0) return
+    try {
+      const slug = sessionStorage.getItem(STORAGE_INTAKE_CATEGORY)
+      if (slug && categories.some((c) => c.name === slug)) {
+        setCategoryKey(slug)
+        sessionStorage.removeItem(STORAGE_INTAKE_CATEGORY)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [categories])
 
   const selectedCategory = useMemo(
     () => categories.find((category) => category.name === categoryKey) ?? categories[0],

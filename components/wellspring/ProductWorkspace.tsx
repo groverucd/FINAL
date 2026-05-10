@@ -15,8 +15,12 @@ import { InventoryTab } from '@/components/wellspring/tabs/InventoryTab'
 import { DistributionTab } from '@/components/wellspring/tabs/DistributionTab'
 import { ReportsTab } from '@/components/wellspring/tabs/ReportsTab'
 import { GlassCard } from '@/components/wellspring/GlassCard'
+import {
+  WorkspaceNavProvider,
+  type WorkspaceTabId,
+} from '@/components/wellspring/WorkspaceNavContext'
 
-type TabId = 'overview' | 'intake' | 'inventory' | 'distribution' | 'reports'
+type TabId = WorkspaceTabId
 
 interface Tab {
   id: TabId
@@ -130,24 +134,26 @@ export const ProductWorkspace = forwardRef<HTMLDivElement>(function ProductWorks
         </GlassCard>
 
         {/* Panel */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={active}
-            id={`panel-${active}`}
-            role="tabpanel"
-            aria-labelledby={`tab-${active}`}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-          >
-            {active === 'overview' && <OverviewTab />}
-            {active === 'intake' && <IntakeTab />}
-            {active === 'inventory' && <InventoryTab />}
-            {active === 'distribution' && <DistributionTab />}
-            {active === 'reports' && <ReportsTab />}
-          </motion.div>
-        </AnimatePresence>
+        <WorkspaceNavProvider setActiveTab={(tab) => setActive(tab)}>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={active}
+              id={`panel-${active}`}
+              role="tabpanel"
+              aria-labelledby={`tab-${active}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {active === 'overview' && <OverviewTab />}
+              {active === 'intake' && <IntakeTab />}
+              {active === 'inventory' && <InventoryTab />}
+              {active === 'distribution' && <DistributionTab />}
+              {active === 'reports' && <ReportsTab />}
+            </motion.div>
+          </AnimatePresence>
+        </WorkspaceNavProvider>
       </div>
     </section>
   )

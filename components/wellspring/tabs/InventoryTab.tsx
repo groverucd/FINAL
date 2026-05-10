@@ -7,6 +7,7 @@ import { type InventoryStatus } from '@/lib/wellspring-data'
 import { InventoryCard } from '../InventoryCard'
 import { getInventory } from '@/lib/api'
 import { useToast } from '../Toast'
+import { STORAGE_INVENTORY_FILTER } from '../WorkspaceNavContext'
 
 const filterChips: Array<{ id: 'all' | InventoryStatus; label: string }> = [
   { id: 'all', label: 'All' },
@@ -58,6 +59,15 @@ export function InventoryTab() {
           }
         })
         setCategories(mapped)
+        try {
+          const pre = sessionStorage.getItem(STORAGE_INVENTORY_FILTER)
+          if (pre === 'low' || pre === 'critical' || pre === 'all') {
+            setFilter(pre === 'all' ? 'all' : pre)
+            sessionStorage.removeItem(STORAGE_INVENTORY_FILTER)
+          }
+        } catch {
+          /* ignore */
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to load inventory.'
         toast(message, 'error')
@@ -76,7 +86,7 @@ export function InventoryTab() {
       const matchesFilter = filter === 'all' || c.status === filter
       return matchesQuery && matchesFilter
     })
-  }, [query, filter])
+  }, [query, filter, categories])
 
   return (
     <div className="flex flex-col gap-5">
