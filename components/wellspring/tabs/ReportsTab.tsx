@@ -21,11 +21,9 @@ import { Reveal } from '@/components/wellspring/Reveal'
 import { useToast } from '@/components/wellspring/Toast'
 import { useWorkspaceNav } from '@/components/wellspring/WorkspaceNavContext'
 import {
-  getInventory,
   getLowInventory,
   getRecommendations,
   getSummary,
-  getWeeklySummary,
 } from '@/lib/api'
 
 const PALETTE = [
@@ -51,6 +49,55 @@ function priorityTone(priority: 'High' | 'Medium' | 'Low') {
   return 'bg-sage/45 text-foreground'
 }
 
+type SummaryRow = {
+  category: string
+  display_name: string
+  intake_total: number
+  outbound_total: number
+}
+
+type LowAlert = { key: string; label: string; status: 'critical' | 'low' }
+
+function buildWeeklyNarrative(summary: SummaryRow[], lowAlerts: LowAlert[]): string {
+  const totalIn = summary.reduce((s, r) => s + r.intake_total, 0)
+  const totalOut = summary.reduce((s, r) => s + r.outbound_total, 0)
+
+  const parts: string[] = []
+
+  if (totalIn === 0 && totalOut === 0) {
+    parts.push(
+      'No intake or distribution was recorded in the last 7 days, so demand for specific categories cannot be inferred from movement yet.',
+    )
+  } else {
+    parts.push(
+      `In the last 7 days, ${totalIn} unit${totalIn === 1 ? '' : 's'} were received and ${totalOut} unit${totalOut === 1 ? '' : 's'} were distributed.`,
+    )
+    const topOut = [...summary].sort((a, b) => b.outbound_total - a.outbound_total)[0]
+    if (topOut && topOut.outbound_total > 0) {
+      parts.push(
+        `Most went out under ${topOut.display_name} (${topOut.outbound_total} unit${topOut.outbound_total === 1 ? '' : 's'}).`,
+      )
+    }
+    const topIn = [...summary].sort((a, b) => b.intake_total - a.intake_total)[0]
+    if (topIn && topIn.intake_total > 0 && topOut && topIn.category !== topOut.category) {
+      parts.push(`Largest intake: ${topIn.display_name} (${topIn.intake_total}).`)
+    }
+  }
+
+  if (lowAlerts.length > 0) {
+    const critical = lowAlerts.filter((a) => a.status === 'critical').map((a) => a.label)
+    const low = lowAlerts.filter((a) => a.status === 'low').map((a) => a.label)
+    const pieces: string[] = []
+    if (critical.length) pieces.push(`${critical.join(', ')} ${critical.length === 1 ? 'is' : 'are'} below threshold (critical)`)
+    if (low.length) pieces.push(`${low.join(', ')} ${low.length === 1 ? 'is' : 'are'} low`)
+    parts.push(`Current shelf: ${pieces.join('; ')}.`)
+  } else {
+    parts.push('All categories are at or above their stock thresholds right now.')
+  }
+
+  return parts.join(' ')
+}
+
 function normalizeCategorySlug(value: string): string {
   const lowered = value.toLowerCase().trim()
   if (lowered.includes('baby')) return 'baby_supplies'
@@ -70,7 +117,7 @@ export function ReportsTab() {
   const [donationsByCategory, setDonationsByCategory] = useState<Array<{ category: string; value: number }>>([])
   const [lowStockAlerts, setLowStockAlerts] = useState<Array<{ key: string; label: string; status: 'critical' | 'low' }>>([])
   const [recommendations, setRecommendations] = useState<RecommendationRow[]>([])
-  const [summaryRows, setSummaryRows] = useState<Array<{ category: string; display_name: string; intake_total: number; outbound_total: number }>>([])
+  const [summaryRows, setSummaryRows] = useState<SummaryRow[]>([])
 
   const totalWeekly = useMemo(
     () => summaryRows.reduce((sum, row) => sum + row.outbound_total, 0),
@@ -86,20 +133,21 @@ export function ReportsTab() {
     let active = true
     async function loadReports() {
       try {
-        const [weekly, inventoryRows, lowRows, recRows, summary] = await Promise.all([
-          getWeeklySummary(),
-          getInventory(),
+        const [lowRows, recRows, summary] = await Promise.all([
           getLowInventory(),
           getRecommendations(),
           getSummary(7),
         ])
         if (!active) return
-        setWeeklySummaryText(weekly.summary)
+        const alerts = lowRows.map((row) => ({
+          key: row.category,
+          label: row.display_name,
+          status: row.status,
+        }))
+        setLowStockAlerts(alerts)
+        setWeeklySummaryText(buildWeeklyNarrative(summary, alerts))
         setDonationsByCategory(
-          inventoryRows.map((row) => ({ category: row.display_name, value: row.quantity })),
-        )
-        setLowStockAlerts(
-          lowRows.map((row) => ({ key: row.category, label: row.display_name, status: row.status })),
+          summary.map((row) => ({ category: row.display_name, value: row.intake_total })),
         )
         setRecommendations(
           recRows.map((row, idx) => ({
@@ -226,7 +274,7 @@ export function ReportsTab() {
         <GlassCard strong className="p-6">
           <div className="mb-4 flex items-baseline justify-between">
             <h3 className="font-serif text-xl font-medium text-foreground">Donations by category</h3>
-            <span className="text-xs text-muted-foreground">Current snapshot</span>
+            <span className="text-xs text-muted-foreground">Intake logged (7 days)</span>
           </div>
           <div className="h-[260px] w-full">
             <ResponsiveContainer width="100%" height="100%">

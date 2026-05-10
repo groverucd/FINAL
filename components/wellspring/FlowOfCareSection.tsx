@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   motion,
   useScroll,
@@ -18,8 +18,9 @@ import {
   Apple,
   Home,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react'
+import type { ApiInventoryItem } from '@/lib/api'
+import { getInventory, getSummary } from '@/lib/api'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -42,16 +43,17 @@ interface FlowStage {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Stage data                                                         */
+/*  Stage meta (colors, copy) — stats come from workspace API           */
 /* ------------------------------------------------------------------ */
 
-const stages: FlowStage[] = [
+type FlowStageMeta = Omit<FlowStage, 'stat'>
+
+const FLOW_STAGE_META: FlowStageMeta[] = [
   {
     id: 'intake',
     step: 'Step 01',
     title: 'Donations come in.',
     copy: 'Volunteers quickly log what arrived before details get lost.',
-    stat: '184 logged this week',
     tooltip: 'Donations are logged before details get lost.',
     icon: ClipboardCheck,
     nodeX: 8,
@@ -64,7 +66,6 @@ const stages: FlowStage[] = [
     step: 'Step 02',
     title: 'Inventory becomes clear.',
     copy: 'Every category shows what is healthy, low, or needs attention.',
-    stat: '846 items tracked',
     tooltip: 'Teams can see what is available and what is low.',
     icon: Boxes,
     nodeX: 36,
@@ -77,7 +78,6 @@ const stages: FlowStage[] = [
     step: 'Step 03',
     title: 'Items go out with care.',
     copy: 'Distributions are recorded clearly while keeping recipient details private.',
-    stat: '312 distributed',
     tooltip: 'Items going out are recorded with privacy in mind.',
     icon: HeartHandshake,
     nodeX: 64,
@@ -90,7 +90,6 @@ const stages: FlowStage[] = [
     step: 'Step 04',
     title: 'Impact becomes visible.',
     copy: 'Reports show how essentials reached women and families.',
-    stat: '124 families supported',
     tooltip: 'Reports turn daily work into clear community impact.',
     icon: HandHeart,
     nodeX: 92,
@@ -100,35 +99,57 @@ const stages: FlowStage[] = [
   },
 ]
 
-/* ------------------------------------------------------------------ */
-/*  Inventory shelf data                                               */
-/* ------------------------------------------------------------------ */
+function attachStats(
+  meta: FlowStageMeta[],
+  intakeWeek: number,
+  inventoryTracked: number,
+  outboundWeek: number,
+): FlowStage[] {
+  const countLabel = (n: number, zero: string, one: string, many: string) => {
+    if (n === 0) return zero
+    if (n === 1) return one
+    return many
+  }
 
-const shelfItems = [
-  { label: 'Hygiene',   qty: 186, max: 220, status: 'low'     },
-  { label: 'Clothing',  qty: 248, max: 248, status: 'healthy'  },
-  { label: 'Baby',      qty: 64,  max: 100, status: 'critical' },
-  { label: 'Food',      qty: 172, max: 200, status: 'watch'    },
-  { label: 'Emergency', qty: 58,  max: 80,  status: 'low'      },
-] as const
+  const statImpact =
+    intakeWeek === 0 && outboundWeek === 0
+      ? 'No movement in the last 7 days yet'
+      : `${outboundWeek} distributed · ${intakeWeek} received (7 days)`
 
-const shelfColors: Record<string, string> = {
-  healthy:  'oklch(0.62 0.1 165)',
-  low:      'oklch(0.78 0.11 60)',
-  watch:    'oklch(0.78 0.09 70)',
-  critical: 'oklch(0.65 0.15 25)',
+  return meta.map((m) => ({
+    ...m,
+    stat:
+      m.id === 'intake'
+        ? countLabel(
+            intakeWeek,
+            'Nothing logged yet this week',
+            '1 logged this week',
+            `${intakeWeek} logged this week`,
+          )
+        : m.id === 'inventory'
+          ? countLabel(
+              inventoryTracked,
+              'No quantity recorded yet — log intake',
+              '1 item on hand',
+              `${inventoryTracked} items on hand`,
+            )
+          : m.id === 'distribution'
+            ? countLabel(
+                outboundWeek,
+                'Nothing distributed yet (7 days)',
+                '1 distributed (7 days)',
+                `${outboundWeek} distributed (7 days)`,
+              )
+            : statImpact,
+  }))
 }
 
-/* ------------------------------------------------------------------ */
-/*  Impact chip data                                                   */
-/* ------------------------------------------------------------------ */
-
-const impactItems = [
-  { label: '86 hygiene kits'      },
-  { label: '42 baby supply packs' },
-  { label: '57 clothing items'    },
-  { label: '29 emergency kits'    },
-]
+const shelfColors: Record<string, string> = {
+  healthy: 'oklch(0.62 0.1 165)',
+  low: 'oklch(0.78 0.11 60)',
+  watch: 'oklch(0.78 0.09 70)',
+  critical: 'oklch(0.65 0.15 25)',
+}
 
 /* ------------------------------------------------------------------ */
 /*  Donation particle configs                                          */
@@ -169,7 +190,7 @@ function StageProgressIndicator({ activeIndex }: { activeIndex: number }) {
               animate={{ width: i === activeIndex ? 28 : 8, opacity: i === activeIndex ? 1 : 0.35 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
               className="h-2 rounded-full"
-              style={{ background: i === activeIndex ? stages[i].color : 'oklch(0.7 0.02 260)' }}
+              style={{ background: i === activeIndex ? FLOW_STAGE_META[i].color : 'oklch(0.7 0.02 260)' }}
             />
             <motion.span
               animate={{ opacity: i === activeIndex ? 1 : 0.4 }}
@@ -437,7 +458,13 @@ function CareOrb({ stage, pct }: { stage: FlowStage; pct: number }) {
 /*  InventoryShelfPreview — lives entirely in the DETAIL ROW          */
 /* ------------------------------------------------------------------ */
 
-function InventoryShelfPreview({ visible }: { visible: boolean }) {
+function InventoryShelfPreview({
+  visible,
+  rows,
+}: {
+  visible: boolean
+  rows: Array<{ label: string; qty: number; max: number; status: ApiInventoryItem['status'] }>
+}) {
   return (
     <AnimatePresence>
       {visible && (
@@ -449,36 +476,40 @@ function InventoryShelfPreview({ visible }: { visible: boolean }) {
           className="glass w-full rounded-2xl p-4 shadow-xl"
         >
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Live Inventory
+            Live inventory
           </p>
-          <div className="flex flex-col gap-2.5">
-            {shelfItems.map((item, i) => {
-              const pct = Math.min(100, Math.round((item.qty / item.max) * 100))
-              const barColor = shelfColors[item.status]
-              return (
-                <motion.div
-                  key={item.label}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.07, duration: 0.35 }}
-                >
-                  <div className="flex items-center justify-between text-[11px] font-medium text-foreground/80">
-                    <span>{item.label}</span>
-                    <span style={{ color: barColor }}>{item.qty}</span>
-                  </div>
-                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border/60">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ delay: i * 0.09 + 0.2, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                      className="h-full rounded-full"
-                      style={{ background: barColor }}
-                    />
-                  </div>
-                </motion.div>
-              )
-            })}
-          </div>
+          {rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No rows yet — log intake to populate categories.</p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {rows.map((item, i) => {
+                const pct = Math.min(100, Math.round((item.qty / Math.max(item.max, 1)) * 100))
+                const barColor = shelfColors[item.status] ?? shelfColors.healthy
+                return (
+                  <motion.div
+                    key={item.label}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.07, duration: 0.35 }}
+                  >
+                    <div className="flex items-center justify-between text-[11px] font-medium text-foreground/80">
+                      <span>{item.label}</span>
+                      <span style={{ color: barColor }}>{item.qty}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border/60">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ delay: i * 0.09 + 0.2, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                        className="h-full rounded-full"
+                        style={{ background: barColor }}
+                      />
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>
@@ -489,7 +520,17 @@ function InventoryShelfPreview({ visible }: { visible: boolean }) {
 /*  ImpactDetail — lives entirely in the DETAIL ROW                   */
 /* ------------------------------------------------------------------ */
 
-function ImpactDetail({ visible }: { visible: boolean }) {
+function ImpactDetail({
+  visible,
+  outboundWeek,
+  intakeWeek,
+  chips,
+}: {
+  visible: boolean
+  outboundWeek: number
+  intakeWeek: number
+  chips: Array<{ label: string }>
+}) {
   return (
     <AnimatePresence>
       {visible && (
@@ -519,18 +560,18 @@ function ImpactDetail({ visible }: { visible: boolean }) {
           >
             <HandHeart className="h-7 w-7" style={{ color: 'oklch(0.55 0.12 40)' }} aria-hidden />
             <p className="mt-1 text-sm font-bold leading-tight" style={{ color: 'oklch(0.42 0.1 40)' }}>
-              312 essentials
+              {outboundWeek === 0 && intakeWeek === 0 ? 'Awaiting logs' : `${outboundWeek} out`}
             </p>
             <p className="text-[10px] font-medium" style={{ color: 'oklch(0.55 0.07 40)' }}>
-              124 families
+              {outboundWeek === 0 && intakeWeek === 0 ? 'Last 7 days' : `${intakeWeek} received (7d)`}
             </p>
           </motion.div>
 
           {/* chip row below the orb */}
           <div className="flex flex-wrap justify-center gap-2">
-            {impactItems.map((item, i) => (
+            {chips.map((item, i) => (
               <motion.div
-                key={item.label}
+                key={`${item.label}-${i}`}
                 initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: i * 0.1 + 0.3, duration: 0.35 }}
@@ -583,7 +624,7 @@ function DonationIconParticles({ stageIndex }: { stageIndex: number }) {
 /* ------------------------------------------------------------------ */
 
 function SectionBackground({ stageIndex }: { stageIndex: number }) {
-  const bg = stages[stageIndex]
+  const bg = FLOW_STAGE_META[stageIndex]
   return (
     <motion.div
       className="absolute inset-0 -z-10"
@@ -606,6 +647,77 @@ export function FlowOfCareSection() {
   const [pathProgress, setPathProgress] = useState(0.02)
   const [containerWidth, setContainerWidth] = useState(900)
 
+  const [inventory, setInventory] = useState<ApiInventoryItem[]>([])
+  const [summaryRows, setSummaryRows] = useState<
+    Array<{ category: string; display_name: string; intake_total: number; outbound_total: number }>
+  >([])
+
+  useEffect(() => {
+    let active = true
+
+    async function pull() {
+      try {
+        const [inv, sum] = await Promise.all([getInventory(), getSummary(7)])
+        if (active) {
+          setInventory(inv)
+          setSummaryRows(sum)
+        }
+      } catch {
+        /* keep last good values */
+      }
+    }
+
+    void pull()
+    const interval = window.setInterval(pull, 30_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  const intakeWeek = useMemo(
+    () => summaryRows.reduce((sum, row) => sum + row.intake_total, 0),
+    [summaryRows],
+  )
+  const outboundWeek = useMemo(
+    () => summaryRows.reduce((sum, row) => sum + row.outbound_total, 0),
+    [summaryRows],
+  )
+  const inventoryTracked = useMemo(
+    () => inventory.reduce((sum, row) => sum + row.quantity, 0),
+    [inventory],
+  )
+
+  const flowStages = useMemo(
+    () => attachStats(FLOW_STAGE_META, intakeWeek, inventoryTracked, outboundWeek),
+    [intakeWeek, inventoryTracked, outboundWeek],
+  )
+
+  const shelfLive = useMemo(
+    () =>
+      inventory.map((row) => ({
+        label: row.display_name,
+        qty: row.quantity,
+        max: Math.max(row.threshold, 1),
+        status: row.status,
+      })),
+    [inventory],
+  )
+
+  const impactChips = useMemo(() => {
+    const sorted = [...summaryRows].sort(
+      (a, b) => Math.max(b.outbound_total, b.intake_total) - Math.max(a.outbound_total, a.intake_total),
+    )
+    const labels: Array<{ label: string }> = []
+    for (const r of sorted) {
+      if (r.outbound_total > 0) labels.push({ label: `${r.outbound_total} ${r.display_name} out` })
+      else if (r.intake_total > 0) labels.push({ label: `${r.intake_total} ${r.display_name} in` })
+      if (labels.length >= 4) break
+    }
+    if (labels.length === 0) return [{ label: 'No category movement this week yet' }]
+    return labels
+  }, [summaryRows])
+
   const { scrollYProgress } = useScroll({
     target: sectionRef,
     offset: ['start start', 'end end'],
@@ -619,7 +731,7 @@ export function FlowOfCareSection() {
     }
   })
 
-  const activeStage = stages[activeIndex]
+  const activeStage = flowStages[activeIndex]
   // orb % keeps it centered on the active node
   const orbPct = activeStage.nodeX
 
@@ -709,7 +821,7 @@ export function FlowOfCareSection() {
                 {/* donation particles float in the node row area */}
                 <DonationIconParticles stageIndex={activeIndex} />
 
-                {stages.map((s, i) => (
+                {flowStages.map((s, i) => (
                   <FlowNode
                     key={s.id}
                     stage={s}
@@ -737,12 +849,12 @@ export function FlowOfCareSection() {
                 <AnimatePresence mode="wait">
                   {activeIndex === 1 && (
                     <motion.div key="inventory" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                      <InventoryShelfPreview visible />
+                      <InventoryShelfPreview visible rows={shelfLive} />
                     </motion.div>
                   )}
                   {activeIndex === 3 && (
                     <motion.div key="impact" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex justify-center">
-                      <ImpactDetail visible />
+                      <ImpactDetail visible outboundWeek={outboundWeek} intakeWeek={intakeWeek} chips={impactChips} />
                     </motion.div>
                   )}
                 </AnimatePresence>
